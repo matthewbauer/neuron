@@ -6,7 +6,7 @@ import { Indexer, Tip, CellCollector } from '@ckb-lumos/indexer'
 import CommonUtils from 'utils/common'
 import RpcService from 'services/rpc-service'
 import TransactionWithStatus from 'models/chain/transaction-with-status'
-import { Address } from 'database/address/address-dao'
+import { Address } from "models/address"
 import AddressMeta from 'database/address/meta'
 import IndexerTxHashCache from 'database/chain/entities/indexer-tx-hash-cache'
 import IndexerCacheService from './indexer-cache-service'
@@ -133,9 +133,7 @@ export default class IndexerConnector {
         args: type.args
       }
     }
-    //this is an required property, which should exist in the lumos interface
-    //@ts-ignore
-    queries.data = data || null
+    queries.data = data || 'any'
 
     const collector = new CellCollector(this.indexer, queries)
 
