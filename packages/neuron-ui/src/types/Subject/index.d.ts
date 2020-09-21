@@ -33,4 +33,5 @@ declare namespace Subject {
     releaseNotes: string
   }
   type URL = string
+  type SignIndex = number
 }

@@ -10,6 +10,7 @@ import { WalletListSubject, CurrentWalletSubject } from 'models/subjects/wallets
 import dataUpdateSubject from 'models/subjects/data-update'
 import AppUpdaterSubject from 'models/subjects/app-updater'
 import { SETTINGS_WINDOW_TITLE } from 'utils/const'
+import DeviceSignIndexSubject from 'models/subjects/device-sign-index-subject'
 
 interface AppResponder {
   sendMessage: (channel: string, arg: any) => void
@@ -59,6 +60,10 @@ export const subscribe = (dispatcher: AppResponder) => {
       dataUpdateSubject.next({ dataType: 'current-wallet', actionType: 'update' })
     }
     dispatcher.updateWindowTitle()
+  })
+
+  DeviceSignIndexSubject.subscribe(index => {
+    dispatcher.sendMessage('device-sign-index', index)
   })
 
   AppUpdaterSubject.subscribe(params => {
