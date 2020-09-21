@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events'
 import { LumosCellQuery } from "../../src/block-sync-renderer/sync/indexer-connector"
+import { flushPromises } from '../test-utils'
 
 const stubbedElectronBrowserOn = jest.fn()
 const stubbedElectronBrowserLoadURL = jest.fn()
@@ -14,6 +15,12 @@ const stubbedUnmountSyncTask = jest.fn()
 const stubbedSyncApiControllerEmitter = jest.fn()
 const stubbedTxDbChangedSubjectNext = jest.fn()
 const stubbedAddressDbChangedSubjectNext = jest.fn()
+const stubbedGetCurrentNetwork = jest.fn()
+const stubbedGenerateAddressesIfNecessary = jest.fn()
+const stubbedFork = jest.fn()
+const stubbedLoggerInfo = jest.fn()
+const stubbedLoggerDebug = jest.fn()
+const stubbedLoggerError = jest.fn()
 
 const childProcessEmiter = new EventEmitter()
 
@@ -46,13 +53,27 @@ const resetMocks = () => {
   stubbedIpcMainOnce.mockReset()
   stubbedQueryIndexer.mockReset()
   stubbedResetIndexerData.mockReset()
+  stubbedGetCurrentNetwork.mockReset()
+
+  stubbedUnmountSyncTask.mockReset()
+  stubbedSyncTaskStart.mockReset()
+
+  stubbedFork.mockReset()
+  stubbedLoggerInfo.mockReset()
+  stubbedLoggerDebug.mockReset()
+  stubbedLoggerError.mockReset()
 }
 
 describe('block sync render', () => {
   describe('in main process', () => {
     let queryIndexer: any
     let createBlockSyncTask: any
-    let killBlockSyncTask: any
+    let resetSyncTask: any
+
+    const network = {
+      id: 'id',
+      genesisHash: '0x92b197aa1fba0f63633922c61c92375c9c074a93e85963554f5499fe1450d0e5'
+    }
 
     beforeEach(async () => {
       resetMocks()
@@ -94,7 +115,15 @@ describe('block sync render', () => {
 
       jest.doMock('child_process', () => {
         return {
-          fork: jest.fn()
+          fork: stubbedFork
+        }
+      })
+
+      jest.doMock('utils/logger', () => {
+        return {
+          info: stubbedLoggerInfo,
+          debug: stubbedLoggerDebug,
+          error: stubbedLoggerError,
         }
       })
 
@@ -126,6 +155,22 @@ describe('block sync render', () => {
           updateTxCountAndBalances: jest.fn(),
           updateUsedByAnyoneCanPayByBlake160s: jest.fn(),
           getAddressesByAllWallets: () => [{}]
+        }
+      })
+
+      jest.doMock('services/networks', () => {
+        return {
+          getInstance: () => ({
+            getCurrent: stubbedGetCurrentNetwork
+          }),
+        }
+      })
+
+      jest.doMock('services/wallets', () => {
+        return {
+          getInstance: () => ({
+            generateAddressesIfNecessary: stubbedGenerateAddressesIfNecessary
+          }),
         }
       })
 
@@ -165,9 +210,11 @@ describe('block sync render', () => {
         }
       })
 
+      stubbedGetCurrentNetwork.mockReturnValue(network)
+
       queryIndexer = require('../../src/block-sync-renderer').queryIndexer
       createBlockSyncTask = require('../../src/block-sync-renderer').createBlockSyncTask
-      killBlockSyncTask = require('../../src/block-sync-renderer').killBlockSyncTask
+      resetSyncTask = require('../../src/block-sync-renderer').resetSyncTask
     });
     afterEach(() => {
       jest.clearAllTimers()
@@ -176,34 +223,30 @@ describe('block sync render', () => {
       expect(stubbedAddressCreatedSubjectSubscribe).toHaveBeenCalled()
       expect(stubbedWalletDeletedSubjectSubscribe).toHaveBeenCalled()
     })
-    describe('after initialized BrowserWindow', () => {
-      beforeEach(() => {
-        createBlockSyncTask()
-        jest.advanceTimersByTime(2000)
-      });
-      describe('#queryIndexer', () => {
-        const query: LumosCellQuery = {lock: null, type: null, data: null}
-        beforeEach(() => {
-          queryIndexer(query)
-        });
-        it('called with SyncTask instance', () => {
-          expect(stubbedQueryIndexer).toHaveBeenCalledWith(query)
-        })
-      });
-    });
 
-    describe('#createBlockSyncTask', () => {
+    describe('with child process created for sync task', () => {
+      const stubbedSetEncodingForStderr = jest.fn()
+
+      let stderrEmitter: EventEmitter
+
       beforeEach(async () => {
-        await createBlockSyncTask(true)
+        stderrEmitter = new EventEmitter()
+        stubbedFork.mockImplementation(
+          () => ({
+            stderr: {
+              setEncoding: stubbedSetEncodingForStderr.mockImplementation(() => stderrEmitter)
+            },
+          })
+        )
+        await resetSyncTask(true)
       });
 
-      afterEach(async () => {
-        stubbedResetIndexerData.mockRestore()
-        await killBlockSyncTask()
+      it('should not reset indexer data', async () => {
+        expect(stubbedResetIndexerData).not.toHaveBeenCalled()
       })
 
-      it('reset indexer data', async () => {
-        expect(stubbedResetIndexerData).toHaveBeenCalled()
+      it('generates addresses', async () => {
+        expect(stubbedGenerateAddressesIfNecessary).toHaveBeenCalled()
       })
 
       it('sync task can be start over by early return', async () => {
@@ -212,92 +255,192 @@ describe('block sync render', () => {
         }).not.toThrow()
       })
 
-      it('should update transaction', () => {
+      it('updates transaction', () => {
         expect(stubbedDataUpdateSubject).toHaveBeenCalledWith({
           dataType: 'transaction',
           actionType: 'update',
         })
       })
 
-      it('should start sync task', () => {
-        expect(stubbedSyncTaskStart).toHaveBeenCalled()
-      })
-    })
-
-    describe('#switchToNetwork', () => {
-      const network = {
-        id: 'id',
-        hash: '0x92b197aa1fba0f63633922c61c92375c9c074a93e85963554f5499fe1450d0e5'
-      }
-      let switchToNetwork: any
-      beforeEach(async () => {
-        switchToNetwork = require('../../src/block-sync-renderer').switchToNetwork
-        await switchToNetwork(network)
-      })
-
-      afterEach(() => {
-        stubbedUnmountSyncTask.mockRestore()
-        stubbedSyncTaskStart.mockRestore()
-      })
-
-      it('should restart sync task', () => {
-        expect(stubbedUnmountSyncTask).toHaveBeenCalled()
+      it('starts sync task', () => {
         expect(stubbedSyncTaskStart).toHaveBeenCalled()
       })
 
-      it('early return if connect the same network', async () => {
-        await switchToNetwork(network)
-        expect(stubbedUnmountSyncTask).not.toHaveBeenCalled()
-        expect(stubbedSyncTaskStart).not.toHaveBeenCalled()
-      })
-
-      it(`don't early return if reconnect is set to true`, async () => {
-        await switchToNetwork(network, true)
-        expect(stubbedUnmountSyncTask).toHaveBeenCalled()
-        expect(stubbedSyncTaskStart).toHaveBeenCalled()
-      })
-
-      it(`do not create sync task if genesis hash don't match`, async () => {
-        await switchToNetwork(network, true, false)
-        expect(stubbedUnmountSyncTask).toHaveBeenCalled()
-        expect(stubbedSyncTaskStart).not.toHaveBeenCalled()
-      })
-    })
-
-    describe('subscribe message from child process', () => {
-      const fakeSendMessageToMainProcess = (channel: string, result: any) => {
-        childProcessEmiter.emit('message', {
-          channel,
-          result
+      describe('catches error logs from child process', () => {
+        beforeEach(async () => {
+          stderrEmitter.emit('data', 'stderr')
+        });
+        it('logs for stderr from child process', () => {
+          expect(stubbedLoggerError).toHaveBeenCalledWith('Sync:ChildProcess:', 'stderr')
         })
-      }
-      const result = { event: '' }
+      });
 
-      beforeEach(async () => {
-        await createBlockSyncTask(true)
+      describe('#queryIndexer', () => {
+        const query: LumosCellQuery = {lock: null, type: null, data: null}
+        let results: any
+        describe('when returns non empty result from SyncTask.queryIndexer', () => {
+          beforeEach(async () => {
+            stubbedQueryIndexer.mockResolvedValueOnce([{}])
+            results = await queryIndexer(query)
+          });
+          it('returns data array', () => {
+            expect(results).toEqual([{}])
+          })
+        });
+        describe('when returns undefined from SyncTask.queryIndexer', () => {
+          beforeEach(async () => {
+            stubbedQueryIndexer.mockResolvedValueOnce(undefined)
+            results = await queryIndexer(query)
+          });
+          it('returns empty array', () => {
+            expect(results).toEqual([])
+          })
+        });
+        describe('when throws error', () => {
+          beforeEach(async () => {
+            stubbedQueryIndexer.mockRejectedValueOnce({})
+            results = await queryIndexer(query)
+          });
+          it('returns empty array', () => {
+            expect(results).toEqual([])
+          })
+        });
+      });
+      describe('#switchToNetwork', () => {
+        let switchToNetwork: any
+
+        describe('after created a sync task and switched to a network', () => {
+          beforeEach(async () => {
+            switchToNetwork = require('../../src/block-sync-renderer').switchToNetwork
+            await switchToNetwork(network)
+            stubbedSyncTaskStart.mockReset()
+            stubbedUnmountSyncTask.mockReset()
+          })
+
+          describe('switches to different network', () => {
+            beforeEach(async () => {
+              await switchToNetwork({id: 'id2', genesisHash: 'hash'})
+            });
+            it('restarts sync task', async () => {
+              expect(stubbedUnmountSyncTask).toHaveBeenCalled()
+              expect(stubbedSyncTaskStart).toHaveBeenCalled()
+            })
+          });
+
+          describe('switches to same network', () => {
+            beforeEach(async () => {
+              await switchToNetwork(network)
+            });
+            it('should not trigger operations on sync task', async () => {
+              expect(stubbedUnmountSyncTask).not.toHaveBeenCalled()
+              expect(stubbedSyncTaskStart).not.toHaveBeenCalled()
+            })
+          });
+
+          describe('forces reconnecting to same network', () => {
+            beforeEach(async () => {
+              await switchToNetwork(network, true)
+            });
+            it(`triggers operations on sync task`, async () => {
+              expect(stubbedUnmountSyncTask).toHaveBeenCalled()
+              expect(stubbedSyncTaskStart).toHaveBeenCalled()
+            })
+          });
+
+          it(`should not create sync task if genesis hash don't match`, async () => {
+            await switchToNetwork(network, true, false)
+            expect(stubbedUnmountSyncTask).toHaveBeenCalled()
+            expect(stubbedSyncTaskStart).not.toHaveBeenCalled()
+          })
+        });
       })
 
-      afterEach(() => {
-        stubbedTxDbChangedSubjectNext.mockRestore()
-        stubbedAddressDbChangedSubjectNext.mockRestore()
-        stubbedSyncApiControllerEmitter.mockRestore()
-      })
+      describe('subscribe message from child process', () => {
+        const fakeSendMessageToMainProcess = (channel: string, result: any) => {
+          childProcessEmiter.emit('message', {
+            channel,
+            result
+          })
+        }
+        const result = { event: '' }
 
-      it('TxDbChangedSubject change in the main process', () => {
-        fakeSendMessageToMainProcess('tx-db-changed', result)
-        expect(stubbedTxDbChangedSubjectNext).toHaveBeenCalledWith(result)
+        describe('handles tx-db-changed event from child process', () => {
+          beforeEach(() => {
+            fakeSendMessageToMainProcess('tx-db-changed', result)
+          });
+          it('TxDbChangedSubject change in the main process', () => {
+            expect(stubbedTxDbChangedSubjectNext).toHaveBeenCalledWith(result)
+          })
+        });
+        describe('handles address-db-changed event from child process', () => {
+          beforeEach(() => {
+            fakeSendMessageToMainProcess('address-db-changed', result)
+          });
+          it('AddressDbChangedSubject change in the main process', () => {
+            fakeSendMessageToMainProcess('address-db-changed', result)
+            expect(stubbedAddressDbChangedSubjectNext).toHaveBeenCalledWith(result)
+          })
+        });
+        describe('handles synced-block-number-updated event from child process', () => {
+          beforeEach(() => {
+            fakeSendMessageToMainProcess('synced-block-number-updated', result)
+          });
+          it('SyncApiController emiter message in the main process', ()=> {
+            fakeSendMessageToMainProcess('synced-block-number-updated', result)
+            expect(stubbedSyncApiControllerEmitter).toHaveBeenCalledWith('synced-block-number-updated', result)
+          })
+        });
+        describe('handles wallet-deleted event from child process', () => {
+          beforeEach(async () => {
+            stubbedUnmountSyncTask.mockReset()
+            stubbedSyncTaskStart.mockReset()
+            fakeSendMessageToMainProcess('wallet-deleted', result)
+            await flushPromises()
+          });
+          it('resets sync task', ()=> {
+            expect(stubbedUnmountSyncTask).toHaveBeenCalledTimes(1)
+            expect(stubbedSyncTaskStart).toHaveBeenCalledTimes(1)
+          })
+        });
+        describe('handles address-created event from child process', () => {
+          beforeEach(async () => {
+            stubbedUnmountSyncTask.mockReset()
+            stubbedSyncTaskStart.mockReset()
+            fakeSendMessageToMainProcess('address-created', result)
+            await flushPromises()
+          });
+          it('resets sync task', ()=> {
+            expect(stubbedUnmountSyncTask).toHaveBeenCalledTimes(1)
+            expect(stubbedSyncTaskStart).toHaveBeenCalledTimes(1)
+          })
+        });
       })
+      describe('with parallel calls', () => {
 
-      it('AddressDbChangedSubject change in the main process', () => {
-        fakeSendMessageToMainProcess('address-db-changed', result)
-        expect(stubbedAddressDbChangedSubjectNext).toHaveBeenCalledWith(result)
-      })
-
-      it('SyncApiController emiter message in the main process', ()=> {
-        fakeSendMessageToMainProcess('synced-block-number-updated', result)
-        expect(stubbedSyncApiControllerEmitter).toHaveBeenCalledWith('synced-block-number-updated', result)
-      })
+        beforeEach(async () => {
+          stubbedSyncTaskStart.mockReset()
+          await Promise.all([
+            resetSyncTask(true),
+            resetSyncTask(true),
+            resetSyncTask(),
+          ])
+        })
+        it('only allows one call passed through among multiple calls, ignoreing the rest', () => {
+          expect(stubbedSyncTaskStart).toHaveBeenCalledTimes(1)
+        });
+      });
     })
+
+    describe('reset sync task and clear indexer folder', () => {
+      beforeEach(async () => {
+        const clearIndexerFolder = true
+        await resetSyncTask(true, clearIndexerFolder)
+      });
+      it('resets indexer data', async () => {
+        expect(stubbedResetIndexerData).toHaveBeenCalled()
+      })
+    });
+
   });
   describe('in renderer process', () => {
     beforeEach(() => {

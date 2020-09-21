@@ -34,7 +34,9 @@ const generateOutput = (
   txStatus: TransactionStatus = TransactionStatus.Success,
   blockNumber = '0',
   capacity = '1000',
-  tokenAmount = '100'
+  tokenAmount = '100',
+  customData: string | undefined = undefined,
+  status: OutputStatus = OutputStatus.Live,
 ) => {
   const outputEntity = new OutputEntity()
   outputEntity.outPointTxHash = randomHex()
@@ -45,8 +47,9 @@ const generateOutput = (
   outputEntity.lockArgs = lock.args
   outputEntity.lockHashType = lock.hashType
   outputEntity.lockHash = lock.computeHash()
-  outputEntity.status = OutputStatus.Live
-  outputEntity.hasData = false
+  outputEntity.status = status
+  outputEntity.data = customData || '0x'
+  outputEntity.hasData = customData ? true : false
   if (tokenID !== 'CKBytes') {
     const type = assetAccountInfo.generateSudtScript(tokenID)
     outputEntity.typeCodeHash = type.codeHash
@@ -196,42 +199,82 @@ describe('AssetAccountService', () => {
     const tokenID = '0x' + '0'.repeat(64)
 
     describe('with both sUDT and CKB accounts', () => {
-      beforeEach(async () => {
-        const assetAccounts = [
-          AssetAccount.fromObject({
-            tokenID,
-            symbol: 'sUDT',
-            tokenName: 'sUDT',
-            decimal: '0',
-            balance: '0',
-            accountName: 'sUDT',
-            blake160,
-          }),
-          AssetAccount.fromObject({
-            tokenID: 'CKBytes',
-            symbol: 'ckb',
-            tokenName: 'ckb',
-            decimal: '0',
-            balance: '0',
-            accountName: 'ckb',
-            blake160,
-          }),
-        ]
-        const outputs = [
-          generateOutput(undefined, undefined, undefined, toShannon(1000)),
-          generateOutput(undefined, undefined, undefined, toShannon(1000)),
-          generateOutput(tokenID),
-          generateOutput(tokenID),
-        ]
-        await createAccounts(assetAccounts, outputs)
-      });
-      it('includes balance calculations for both sUDT and CKB accounts', async () => {
-        const result = await AssetAccountService.getAll(walletId)
+      describe('with live cells', () => {
+        beforeEach(async () => {
+          const assetAccounts = [
+            AssetAccount.fromObject({
+              tokenID,
+              symbol: 'sUDT',
+              tokenName: 'sUDT',
+              decimal: '0',
+              balance: '0',
+              accountName: 'sUDT',
+              blake160,
+            }),
+            AssetAccount.fromObject({
+              tokenID: 'CKBytes',
+              symbol: 'ckb',
+              tokenName: 'ckb',
+              decimal: '0',
+              balance: '0',
+              accountName: 'ckb',
+              blake160,
+            }),
+          ]
+          const outputs = [
+            generateOutput(undefined, undefined, undefined, toShannon(1000)),
+            generateOutput(undefined, undefined, undefined, toShannon(1000)),
+            generateOutput(tokenID),
+            generateOutput(tokenID),
+          ]
+          await createAccounts(assetAccounts, outputs)
+        });
+        it('includes balance calculations for both sUDT and CKB accounts', async () => {
+          const result = await AssetAccountService.getAll(walletId)
 
-        expect(result.length).toEqual(2)
-        expect(result.find(a => a.tokenID === tokenID)?.balance).toEqual('200')
-        expect(result.find(a => a.tokenID === 'CKBytes')?.balance).toEqual(toShannon(2000 - 61).toString())
-      })
+          expect(result.length).toEqual(2)
+          expect(result.find(a => a.tokenID === tokenID)?.balance).toEqual('200')
+          expect(result.find(a => a.tokenID === 'CKBytes')?.balance).toEqual(toShannon(2000 - 61).toString())
+        })
+      });
+      describe('with cells being sent', () => {
+        beforeEach(async () => {
+          const assetAccounts = [
+            AssetAccount.fromObject({
+              tokenID,
+              symbol: 'sUDT',
+              tokenName: 'sUDT',
+              decimal: '0',
+              balance: '0',
+              accountName: 'sUDT',
+              blake160,
+            }),
+            AssetAccount.fromObject({
+              tokenID: 'CKBytes',
+              symbol: 'ckb',
+              tokenName: 'ckb',
+              decimal: '0',
+              balance: '0',
+              accountName: 'ckb',
+              blake160,
+            }),
+          ]
+          const outputs = [
+            generateOutput(undefined, undefined, undefined, toShannon(1000)),
+            generateOutput(undefined, undefined, undefined, toShannon(1000), undefined, undefined, OutputStatus.Sent),
+            generateOutput(tokenID),
+            generateOutput(tokenID, undefined, undefined, undefined, undefined, undefined, OutputStatus.Sent),
+          ]
+          await createAccounts(assetAccounts, outputs)
+        });
+        it('includes balance calculations for both sUDT and CKB accounts', async () => {
+          const result = await AssetAccountService.getAll(walletId)
+
+          expect(result.length).toEqual(2)
+          expect(result.find(a => a.tokenID === tokenID)?.balance).toEqual('200')
+          expect(result.find(a => a.tokenID === 'CKBytes')?.balance).toEqual(toShannon(2000 - 61).toString())
+        })
+      });
     });
 
     describe('with only one newly created CKB cell under a ACP lock', () => {
@@ -278,6 +321,33 @@ describe('AssetAccountService', () => {
         const result = await AssetAccountService.getAll(walletId)
 
         expect(result.length).toEqual(0)
+      });
+    });
+    describe('with data in some of CKB ACP cells', () => {
+      beforeEach(async () => {
+        const assetAccounts = [
+          AssetAccount.fromObject({
+            tokenID: 'CKBytes',
+            symbol: 'ckb',
+            tokenName: 'ckb',
+            decimal: '0',
+            balance: '0',
+            accountName: 'ckb',
+            blake160,
+          }),
+        ]
+        const customData = '0x00'
+        const outputs = [
+          generateOutput(undefined, undefined, undefined, toShannon(1000)),
+          generateOutput(undefined, undefined, undefined, toShannon(2000), undefined, customData),
+        ]
+        await createAccounts(assetAccounts, outputs)
+      });
+      it('ignores the balance of CKB ACP cells having data', async () => {
+        const result = await AssetAccountService.getAll(walletId)
+
+        expect(result.length).toEqual(1)
+        expect(result[0].balance).toEqual(toShannon(1000 - 61).toString())
       });
     });
 
@@ -507,6 +577,34 @@ describe('AssetAccountService', () => {
         }
         expect(ckbAccount.tokenID).toEqual('CKBytes')
         expect(ckbAccount.balance).toEqual(toShannon(100))
+      });
+    });
+
+    describe('with data in some of CKB ACP cells', () => {
+      beforeEach(async () => {
+        const assetAccounts = [
+          AssetAccount.fromObject({
+            tokenID: 'CKBytes',
+            symbol: 'ckb',
+            tokenName: 'ckb',
+            decimal: '0',
+            balance: '0',
+            accountName: 'ckb',
+            blake160,
+          }),
+        ]
+        const customData = '0x00'
+        const outputs = [
+          generateOutput(undefined, undefined, undefined, toShannon(1000)),
+          generateOutput(undefined, undefined, undefined, toShannon(2000), undefined, customData),
+        ]
+        accountIds = await createAccounts(assetAccounts, outputs)
+      });
+      it('ignores the balance of CKB ACP cells having data', async () => {
+        const [ckbAccountId] = accountIds
+        const ckbAccount = await AssetAccountService.getAccount({walletID: '', id: ckbAccountId})
+
+        expect(ckbAccount!.balance).toEqual(toShannon(1000 - 61).toString())
       });
     });
 

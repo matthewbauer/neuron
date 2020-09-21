@@ -44,7 +44,7 @@ export default class ApiController {
   public async mount() {
     this.registerHandlers()
 
-    this.networksController.start()
+    await this.networksController.start()
   }
 
   public runCommand(command: string, params: string) {

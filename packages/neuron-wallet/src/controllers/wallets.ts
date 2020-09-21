@@ -20,6 +20,7 @@ import {
   IncorrectPassword,
   InvalidJSON,
   InvalidAddress,
+  UsedName,
 } from 'exceptions'
 import AddressService from 'services/addresses'
 import { MainnetAddressRequired, TestnetAddressRequired } from 'exceptions/address'
@@ -251,7 +252,10 @@ export default class WalletsController {
             status: ResponseCode.Success,
             result: wallet
           }
-        } catch {
+        } catch(e) {
+          if (e instanceof UsedName) {
+            throw e
+          }
           throw new InvalidJSON()
         }
       }
