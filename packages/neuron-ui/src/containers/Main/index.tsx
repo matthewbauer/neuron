@@ -1,5 +1,5 @@
-import React, { useMemo, useEffect } from 'react'
-import { useHistory, useLocation, useRouteMatch } from 'react-router-dom'
+import React, { useMemo } from 'react'
+import { useHistory, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
 import { useState as useGlobalState, useDispatch } from 'states'
