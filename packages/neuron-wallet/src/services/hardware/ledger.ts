@@ -60,11 +60,18 @@ export default class Ledger extends Hardware {
     }
     const txs = await Promise.all(rawTx.inputs.map(i => ckb.rpc.getTransaction(i.previous_output!.tx_hash)))
     const txContext = txs.map(i => ckb.rpc.paramsFormatter.toRawTransaction(i.transaction))
+    var txContext_ = Object.create(txContext)
+    for (const tx in txContext_) {
+      for (const output in txContext_[tx].outputs) {
+        txContext_[tx].outputs[output].type_ = txContext_[tx].outputs[output].type
+        delete txContext_[tx].outputs[output].type
+      }
+    }
     const signature = await this.ledgerCKB!.signTransaction(
       path,
       rawTx_,
       witnesses,
-      txContext,
+      txContext_,
       this.firstReceiveAddress,
     )
 
