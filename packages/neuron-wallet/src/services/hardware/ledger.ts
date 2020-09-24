@@ -53,11 +53,16 @@ export default class Ledger extends Hardware {
   public async signTransaction (_: string, tx: Transaction, witnesses: string[], path: string) {
     const { ckb } = NodeService.getInstance()
     const rawTx = ckb.rpc.paramsFormatter.toRawTransaction(tx.toSDKRawTransaction())
+    var rawTx_ = Object.create(rawTx)
+    for (const output in rawTx_.outputs) {
+      rawTx_.outputs[output].type_ = rawTx_.outputs[output].type
+      delete rawTx_.outputs[output].type
+    }
     const txs = await Promise.all(rawTx.inputs.map(i => ckb.rpc.getTransaction(i.previous_output!.tx_hash)))
     const txContext = txs.map(i => ckb.rpc.paramsFormatter.toRawTransaction(i.transaction))
     const signature = await this.ledgerCKB!.signTransaction(
       path,
-      rawTx,
+      rawTx_,
       witnesses,
       txContext,
       this.firstReceiveAddress,
